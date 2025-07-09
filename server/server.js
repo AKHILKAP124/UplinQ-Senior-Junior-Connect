@@ -6,10 +6,10 @@ import cookieParser from 'cookie-parser'
 
 // Cors configuration
 const corsOptions = {
-  origin: '*',
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  credentials: true
-}
+  origin: "http://localhost:5173",
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+  credentials: true,
+};
 
 // Dotenv configation
 dotenv.config()
@@ -25,12 +25,14 @@ app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())
 
-// db connection
-import database from './utils/database_connection.js'
-database
+// Database connection
+import connectToDatabase from './utils/database_connection.js'
+await connectToDatabase().then(() => {
+
   app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`)
   })
+}) 
 
 app.get('/', (req, res) => {
   res.send('Server is running!')
@@ -39,5 +41,8 @@ app.get('/', (req, res) => {
 
 // Routes
 import UserRouter from './routes/User.js'
+import emailRouter from './routes/Email.js'
+
 app.use('/api/user', UserRouter)
+app.use('/api/email', emailRouter)
 

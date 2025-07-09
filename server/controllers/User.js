@@ -1,174 +1,243 @@
-import database from "../utils/database_connection.js";
+import User from "../models/User.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-
+import generateUniqueUsername from "../utils/helper.js";
 
 
 const register = async (req, res) => {
-    const { name, email, password, role } = req.body;
-    try {
-      if (!name || !email || !password || !role) {
-        return res.status(400).json({ message: "All fields are required" });
-        }
-
-        await database.query( "USE Uplinq" );
-
-        const [existingUser] = await database.query(
-            "SELECT * FROM user WHERE email = ?",
-            [email]
-        );
-
-        
-        if (existingUser.length > 0) {
-            return res.status(400).json({ message: "User already exists", data: existingUser });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-        
-        await database.query(
-            "INSERT INTO user (name, email, password, role) VALUES (?, ?, ?, ?)",
-            [name, email, hashedPassword, role]
-        );
-
-        const [user] = await database.query(
-            "SELECT * FROM user WHERE email = ?",
-            [email]
-        );
-        
-        return res.status(200).json({ message: "User registered successfully", data: user });
-        
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: "Internal server error" });
+  const { name, email, password } =
+    req.body;
+  try {
+    // Check if all required fields are provided
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: "All fields are required" });
     }
+    // Function to generate a unique username
+    const UniqueUsername = generateUniqueUsername(name);
+
+    // Create a new user
+    const user = await User.create({
+      username: UniqueUsername,
+      name,
+      email,
+      password
+    });
+
+    // Save the user to the database
+    return res
+      .status(200)
+      .json({ message: "User registered successfully", data: user });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
 };
 
-const login = async (req, res) => {
-    try {
-        const { email, password } = req.body;
+const saveDetails = async (req, res) => {
+  try {
+    const { userId, college, avatar, branch, year, skills } = req.body;
 
-        if (!email || !password) {
-            return res.status(400).json({ message: "All fields are required" });
-        }
-
-        await database.query("USE Uplinq");
-
-        const [user] = await database.query(
-            "SELECT * FROM user WHERE email = ?",
-            [email]
-        );
-
-        if (user.length <= 0) {
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        const isPasswordValid = await bcrypt.compare(password, user[0].password);
-
-        if (isPasswordValid) {
-
-            const uuid = jwt.sign({ id: user[0].id }, process.env.UUID_SECRET);
-            res.cookie("uuid", uuid, {
-                httpOnly: true,
-                secure: true,
-            });
-            return res.status(200).json({ message: "User logged in successfully", data: user });
-        } else {
-            return res.status(401).json({ message: "Invalid email or password" });
-        }
-    } catch (error) {
-        
-        console.error(error);
-        return res.status(500).json({ message: "Internal server error" });
+    if (!college || !avatar || !branch || !year || !skills) {
+      return res.status(400).json({ message: "All fields are required" });
     }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    await User.findByIdAndUpdate(userId, {
+      college,
+      avatar,
+      branch,
+      year,
+      skills,
+    });
     
+    return res.status(200).json({ message: "User updated successfully" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
 }
 
+const login = async (req, res) => {
+  try {
+    const { userCredentials , password } = req.body;
+    if (!userCredentials || !password) {
+      return res.status(400).json({ message: "All fields are required" });
+      }
+      
+    // Check if the user exists
+    const user = await User.findOne({ $or: [{ email: userCredentials }, { username: userCredentials }] });
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    const decodePassword = await bcrypt.compare(password, user.password);
+
+    console.log(user, password, decodePassword);
+
+    // Check if the password is correct
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: "Invalid password" });
+      }
+
+    // Generate a UUID token
+    const token = jwt.sign({ id: user?.id }, process.env.UUID_SECRET, {
+      expiresIn: "1d",
+    });
+
+    // Set the UUID token as a cookie
+    res.cookie("uuid", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    });
+
+    return res.status(200).json({ message: "User logged in successfully", data: user });
+    
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 const logout = async (req, res) => {
-    res.clearCookie("uuid");
-    return res.status(200).json({ message: "User logged out successfully" });
+  res.clearCookie("uuid");
+  return res.status(200).json({ message: "User logged out successfully" });
 };
 
 const changePassword = async (req, res) => {
+  try {
+    const { password, newPassword } = req.body;
+    const user = req?.user;
 
-    try {
-        const { password, newPassword } = req.body;
-        const user = req?.user;
-
-        if (!password || !newPassword) {
-            return res.status(400).json({ message: "All fields are required" });
-        }
-
-        await database.query("USE Uplinq");
-
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-
-        if (isPasswordValid) {
-            const hashedPassword = await bcrypt.hash(newPassword, 10);
-            await database.query(
-                "UPDATE user SET password = ? WHERE id = ?",
-                [hashedPassword, user.id]
-            );
-            return res.status(200).json({ message: "Password changed successfully" });
-        } else {
-            return res.status(401).json({ message: "Invalid password" });
-        }
-
-    } catch (error) {
-        
-        console.error(error);
-        return res.status(500).json({ message: "Internal server error" });
+    if (!password || !newPassword) {
+      return res.status(400).json({ message: "All fields are required" });
     }
+
+    await database.query("USE Uplinq");
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (isPasswordValid) {
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await database.query("UPDATE user SET password = ? WHERE id = ?", [
+        hashedPassword,
+        user.id,
+      ]);
+      return res.status(200).json({ message: "Password changed successfully" });
+    } else {
+      return res.status(401).json({ message: "Invalid password" });
+    }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+const updateUser = async (req, res) => {
+  try {
+    const { name, email, role } = req.body;
+    const user = req?.user;
+    await database.query("USE Uplinq");
+    await database.query(
+      "UPDATE user SET name = ?, email = ?, role = ? WHERE id = ?",
+      [name, email, role, user.id]
+    );
+    return res.status(200).json({ message: "User updated successfully" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+const emailValidation = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const user = await User.findOne({ email });
+    if (user) {
+      console.log(user);
+      return res.status(400).json({ message: "Email already exists" });
+    }
+
+    return res.status(200).json({ message: "Email is valid" });
     
-}
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
 
 const getUser = async (req, res) => {
-    try {
-        const user = req?.user;
-        return res.status(200).json({ message: "User fetched successfully", data: user });
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: "Internal server error" });
-    }
-}
+  try {
+    const user = req?.user;
+    return res
+      .status(200)
+      .json({ message: "User fetched successfully", data: user });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
 
 const getUserById = async (req, res) => {
-    
-    try {
+  try {
+    const userId = req.body;
 
-        const userId = req.body;
-
-        if (!userId) {
-            return res.status(400).json({ message: "userId is required" });
-        }
-
-        await database.query("USE Uplinq");
-
-        const [user] = await database.query(
-            "SELECT * FROM user WHERE id = ?",
-            [userId]
-        );
-
-        if (user.length <= 0) {
-            return res.status(404).json({ message: "User not found" });
-        }
-        
-        return res.status(200).json({ message: "User fetched successfully", data: user });
-        
-    } catch (error) {
-        console.log(error)
-        return res.status(500).json({message: "Internal Server Error"})
+    if (!userId) {
+      return res.status(400).json({ message: "userId is required" });
     }
-}
+
+    await database.query("USE Uplinq");
+
+    const [user] = await database.query("SELECT * FROM user WHERE id = ?", [
+      userId,
+    ]);
+
+    if (user.length <= 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    return res
+      .status(200)
+      .json({ message: "User fetched successfully", data: user });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
 
 const getAllUsers = async (req, res) => {
-    try {
-        await database.query("USE Uplinq");
-        const [users] = await database.query("SELECT * FROM user");
-        return res.status(200).json({ message: "Users fetched successfully", data: users });
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: "Internal server error" });
-    }
-}
+  try {
+    await database.query("USE Uplinq");
+    const [users] = await database.query("SELECT * FROM user");
+    return res
+      .status(200)
+      .json({ message: "Users fetched successfully", data: users });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
 
-export { register, login, changePassword, logout, getUser, getUserById, getAllUsers };
+export {
+  register,
+  saveDetails,
+  login,
+  changePassword,
+  updateUser,
+  emailValidation,
+  logout,
+  getUser,
+  getUserById,
+  getAllUsers,
+};
